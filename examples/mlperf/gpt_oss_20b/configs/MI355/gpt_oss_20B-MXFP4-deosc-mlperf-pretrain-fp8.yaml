@@ -1,6 +1,6 @@
 work_group: ${TEAM:amd}
 user_name: ${USER:root}
-exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4}
+exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_fp8}
 workspace: ${PRIMUS_WORKSPACE:./output}
 
 modules:
@@ -56,7 +56,7 @@ modules:
       clip_grad: 1.0
       check_for_nan_in_loss_and_grad: false
       # Note: requires Megatron patch https://github.com/NVIDIA/Megatron-LM/pull/5642
-      te_precision_config_file: ${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-te-precision.yaml
+      te_precision_config_file: ${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-te-precision-fp8.yaml
 
       # hyper parameters
       train_iters: ${PRIMUS_TRAIN_ITERS:1200000}

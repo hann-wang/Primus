@@ -16,8 +16,8 @@ modules:
       stage: ${PRIMUS_STAGE:mlperf_pretrain}
 
       # tokenizer
-      tokenizer_type: Llama3Tokenizer
-      tokenizer_model: ${MODEL:meta-llama/Llama-3.1-8B}
+      tokenizer_type: HuggingFaceTokenizer
+      tokenizer_model: ${MODEL:unsloth/llama-3-8b}
 
       # model
       num_layers: 24

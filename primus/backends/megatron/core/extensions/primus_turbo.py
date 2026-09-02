@@ -663,7 +663,7 @@ def primus_turbo_fp4_autocast(
 
 
 def _get_fp8_autocast_for_quant_recipe(qrecipe: TEQuantizationRecipe):
-    if FP8GlobalStateManager.is_fp8_enabled():
+    if _is_fp4_or_fp8_enabled():
         if not qrecipe.override_quantized_autocast:
             return nullcontext()
     else:

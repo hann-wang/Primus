@@ -1,0 +1,18 @@
+configs:
+  fp8:
+    transformer_engine_config_type: "TEQuantizationParams"
+    training_recipe: {
+      fp8_quantization_recipe: "tensorwise"
+    }
+
+matchers:
+  self_attn_qkv_fp8:
+    config: "fp8"
+    type: "glob"
+    pattern: "*.self_attention.linear_qkv"
+    enabled: true
+  self_attn_proj_fp8:
+    config: "fp8"
+    type: "glob"
+    pattern: "*.self_attention.linear_proj"
+    enabled: true
