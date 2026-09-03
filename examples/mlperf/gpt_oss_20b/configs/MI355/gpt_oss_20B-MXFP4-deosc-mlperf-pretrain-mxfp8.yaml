@@ -1,6 +1,6 @@
 work_group: ${TEAM:amd}
 user_name: ${USER:root}
-exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_fp8_gradreducefp32_deosc768_100_4.0}
+exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_mxfp8_skip12_deosc768_100_4.0}
 workspace: ${PRIMUS_WORKSPACE:./output}
 
 modules:
@@ -52,14 +52,14 @@ modules:
       fp8: null
       fp4: e2m1
       fp4_recipe: mxfp4
-      mxfp4_gradient_stochastic_rounding: true
-      clip_grad: 1.0
-      first_last_layers_bf16: false
+      first_last_layers_bf16: true
       num_layers_at_start_in_bf16: 1
       num_layers_at_end_in_bf16: 2
+      mxfp4_gradient_stochastic_rounding: true
+      clip_grad: 1.0
       check_for_nan_in_loss_and_grad: false
       # Note: requires Megatron patch https://github.com/NVIDIA/Megatron-LM/pull/5642
-      te_precision_config_file: ${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-te-precision-fp8.yaml
+      te_precision_config_file: ${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-te-precision-mxfp8.yaml
 
       # hyper parameters
       train_iters: ${PRIMUS_TRAIN_ITERS:1200000}
