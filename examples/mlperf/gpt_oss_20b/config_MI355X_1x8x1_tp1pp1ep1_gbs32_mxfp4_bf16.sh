@@ -21,12 +21,12 @@ export PYTHONPATH="${PRIMUS_PATH}:${PRIMUS_PATH}/third_party/Megatron-LM:${PYTHO
 #export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-FP8-mlperf-pretrain.yaml
 export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain.yaml
 export DATA_PATH=/data
-export TRAIN_LOG_FILE=train.mlperfpretrain.exp.mxfp4-bf16.log
+export TRAIN_LOG_FILE=train.mlperfpretrain.exp.mxfp4-bf16-mbs4gbs32-deosc1000_100_3.0-skip12qkvofix.log
 
 # -----------------------------------------------------------------------------
 # Training Hyperparameters
 # -----------------------------------------------------------------------------
-export PRIMUS_MICRO_BATCH_SIZE=2
+export PRIMUS_MICRO_BATCH_SIZE=4
 export PRIMUS_GLOBAL_BATCH_SIZE=32
 export EVAL_ITERS=$((1024 / PRIMUS_GLOBAL_BATCH_SIZE))  # MLPerf closed: eval_iters * GBS = 1024 eval samples
 export PRIMUS_LR=8.0e-4
@@ -50,8 +50,8 @@ export PRIMUS_EP=1
 # -----------------------------------------------------------------------------
 # Primus Configuration
 # -----------------------------------------------------------------------------
-export PRIMUS_TURBO_GROUPED_GEMM_BACKEND=flydsl
-export PRIMUS_TURBO_GEMM_BACKEND=triton
+export PRIMUS_TURBO_GROUPED_GEMM_BACKEND=fp4:flydsl,bf16:hipblaslt
+export PRIMUS_TURBO_GEMM_BACKEND=fp4:flydsl,bf16:hipblaslt
 export PRIMUS_TURBO_FUSED_WGRAD_ACCUM="${PRIMUS_TURBO_FUSED_WGRAD_ACCUM:-1}"
 export PRIMUS_NUM_WORKERS="${PRIMUS_NUM_WORKERS:-2}"
 export PRIMUS_GRAD_REDUCE_IN_BF16=true

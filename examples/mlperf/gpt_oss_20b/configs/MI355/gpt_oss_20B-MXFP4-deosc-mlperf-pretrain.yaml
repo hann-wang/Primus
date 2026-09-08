@@ -1,6 +1,6 @@
 work_group: ${TEAM:amd}
 user_name: ${USER:root}
-exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4}
+exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_bf16-mbs4gbs32-deosc1000_100_3.0-skip12qkvofix}
 workspace: ${PRIMUS_WORKSPACE:./output}
 
 modules:
@@ -53,6 +53,9 @@ modules:
       fp8: null
       fp4: e2m1
       fp4_recipe: mxfp4
+      first_last_layers_bf16: true
+      num_layers_at_start_in_bf16: 1
+      num_layers_at_end_in_bf16: 2
       mxfp4_gradient_stochastic_rounding: true
       clip_grad: 1.0
       check_for_nan_in_loss_and_grad: false

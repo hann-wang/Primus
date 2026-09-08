@@ -21,7 +21,7 @@ export PYTHONPATH="${PRIMUS_PATH}:${PRIMUS_PATH}/third_party/Megatron-LM:${PYTHO
 #export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-FP8-mlperf-pretrain.yaml
 export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain-fp8.yaml
 export DATA_PATH=/data
-export TRAIN_LOG_FILE=train.mlperfpretrain.exp.mxfp4-fp8-mbs4gbs32-deosc768_100_4.0-gradreducefp32-linearflydsl.log
+export TRAIN_LOG_FILE=train.mlperfpretrain.exp.mxfp4-fp8-mbs4gbs32-bf16deosc768_100_4.0-qkvfix-linearflydsl-turboattn.log
 
 # -----------------------------------------------------------------------------
 # Training Hyperparameters
@@ -54,7 +54,7 @@ export PRIMUS_TURBO_GROUPED_GEMM_BACKEND=fp4:flydsl,fp8:flydsl,bf16:hipblaslt
 export PRIMUS_TURBO_GEMM_BACKEND=fp4:flydsl,fp8:hipblaslt,bf16:hipblaslt
 export PRIMUS_TURBO_FUSED_WGRAD_ACCUM="${PRIMUS_TURBO_FUSED_WGRAD_ACCUM:-1}"
 export PRIMUS_NUM_WORKERS="${PRIMUS_NUM_WORKERS:-2}"
-export PRIMUS_GRAD_REDUCE_IN_BF16=false
+export PRIMUS_GRAD_REDUCE_IN_BF16=true
 export USE_TURBO_RMS_NORM=true
 export PRIMUS_TURBO_MXFP4_SCALE_ROUNDING=2
 

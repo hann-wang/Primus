@@ -1,6 +1,6 @@
 work_group: ${TEAM:amd}
 user_name: ${USER:root}
-exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_fp8_gradreducefp32_deosc768_100_4.0}
+exp_name: ${EXP_NAME:gpt_oss_20b_mxfp4_fp8_qkvfix_bf16deosc768_100_4.0}
 workspace: ${PRIMUS_WORKSPACE:./output}
 
 modules:
@@ -114,9 +114,14 @@ modules:
       apply_rope_fusion: true
 
       # sliding window attention
-      use_turbo_attention: false
-      window_size: [128, 0]
-      window_attn_skip_freq: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
+      use_turbo_attention: true
+      enable_turbo_attention_float8: false
+      # GPT-OSS alternates 128-token sliding attention and full attention.
+      # PrimusTurboAttention derives this pattern itself; TE's window_size and
+      # window_attn_skip_freq must remain unset.
+      use_sink_attention: true
+      sink_sliding_window: 128
+      sink_window_even_layers_only: true
 
       # MoE settings
       moe_apply_probs_on_input: false
@@ -185,7 +190,7 @@ modules:
       use_turbo_grouped_gemm: true
       turbo_grouped_gemm_without_padding: ${TURBO_GROUPED_GEMM_WITHOUT_PADDING:true}
       use_turbo_rms_norm: true
-      use_turbo_norm_te_linear: false
+      use_turbo_norm_te_linear: true
       use_turbo_fused_act_with_probs: true
 
       # DeepEP
