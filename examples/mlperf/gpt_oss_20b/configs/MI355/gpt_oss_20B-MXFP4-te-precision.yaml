@@ -7,7 +7,7 @@ matchers:
   self_attn_qkv_bf16:
     config: "bf16"
     type: "glob"
-    pattern: "*.self_attention.linear_qkv"
+    pattern: "*.self_attention.linear_qkv.linear"
     enabled: true
   self_attn_proj_bf16:
     config: "bf16"
