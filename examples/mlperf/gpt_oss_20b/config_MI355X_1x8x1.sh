@@ -10,13 +10,14 @@ export MASTER_PORT=29501
 
 export PRIMUS_PATH=/workspace/Primus
 export PRIMUS_MLPERF=1
-export PYTHONPATH="${PRIMUS_PATH}:${PRIMUS_PATH}/third_party/Megatron-LM:${PYTHONPATH}"
-export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-FP8-turbo-attn-mlperf-pretrain.yaml
+export PYTHONPATH="${PRIMUS_PATH}:${PRIMUS_PATH}/third_party/Megatron-LM:${PYTHONPATH:-}"
+# export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-FP8-turbo-attn-mlperf-pretrain.yaml
 export DATA_PATH=/data
 
 # MXFP4 + de-oscillation:
-#   export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain.yaml
-#   export MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR=mxfp4
+export EXP=${PRIMUS_PATH}/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain.yaml
+export MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR=mxfp4
+export TRAIN_LOG_FILE=train.mlperfpretrain.exp.mxfp4-fp8qkvo-mbs4gbs32-deosc768_100_4.0.log
 
 export PRIMUS_MICRO_BATCH_SIZE=4
 export PRIMUS_GLOBAL_BATCH_SIZE=32
@@ -39,9 +40,12 @@ export PRIMUS_GRAD_REDUCE_IN_BF16=true
 export USE_TURBO_RMS_NORM=true
 export USE_TURBO_NORM_TE_LINEAR=true
 
-# 0=RTE (default), 1=RZ, 2=stochastic. Consumed by Turbo MXFP4 HIP/FlyDSL quant
-# on gpt-oss-mxfp4 branches; ignored by Turbo builds that do not read it.
-export PRIMUS_TURBO_MXFP4_SCALE_ROUNDING="${PRIMUS_TURBO_MXFP4_SCALE_ROUNDING:-0}"
+# E8M0 block-scale rounding: 0=half ULP, 1=one ULP, 2=three-eighths ULP. This is
+# not gradient stochastic rounding, which mxfp4_gradient_stochastic_rounding
+# controls separately. The MXFP4 recipe is validated at 2. Read by the recipe as
+# mxfp4_scale_rounding_mode; Turbo builds from before the UoS work took it as an
+# environment variable of the same name instead.
+export PRIMUS_TURBO_MXFP4_SCALE_ROUNDING="${PRIMUS_TURBO_MXFP4_SCALE_ROUNDING:-2}"
 
 export HSA_ENABLE_INTERRUPT=0
 export HSA_NO_SCRATCH_RECLAIM=1

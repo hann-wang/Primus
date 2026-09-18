@@ -3,7 +3,7 @@
 ARG BASE_IMAGE=rocm/primus:v26.5@sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1
 FROM ${BASE_IMAGE}
 
-ARG PRIMUS_TURBO_REF=5be7de334855ad0edee3cb47d4b578153991c564
+ARG PRIMUS_TURBO_REF=9f05cd85a54a9db3e60acf9520ba3a05a96228c4
 ARG MAX_JOBS=96
 
 ENV MLPERF_RUNTIME_SERIES=v26.5
@@ -19,7 +19,7 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip uninstall -y primus-turbo primus_turbo || true
 
 # The v26.5 base already contains the tested Triton 3.7 compiler.
-RUN git clone --recursive https://github.com/zhitwang17/Primus-Turbo.git && \
+RUN git clone --recursive https://github.com/AMD-AGI/Primus-Turbo.git && \
     cd Primus-Turbo && git checkout "${PRIMUS_TURBO_REF}" && \
     git submodule update --init --recursive && \
     python3 -m pip install -r requirements.txt && \

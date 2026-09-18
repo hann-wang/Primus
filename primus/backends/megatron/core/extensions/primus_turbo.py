@@ -441,12 +441,13 @@ class PrimusTurboQuantConfig:
         scale_dtype: ScaleDtype = ScaleDtype.FP32,
         block_size: int = None,
         use_gradient_sr: bool = True,
+        scale_rounding_mode: int = 0,
     ):
         self._is_fp4 = False
         self._is_fp8 = False
         if format == Format.E2M1_X2:
             # FP4
-            self._quant_config = Float4QuantConfig(
+            fp4_kwargs = dict(
                 format=format,
                 granularity=granularity,
                 strategy=strategy,
@@ -454,6 +455,17 @@ class PrimusTurboQuantConfig:
                 block_size=block_size,
                 use_gradient_sr=use_gradient_sr,
             )
+            # scale_rounding_mode arrived with the Turbo MXFP4 UoS work. Older
+            # Turbo builds took the mode from an environment variable, so only
+            # pass it when the installed Float4QuantConfig declares it.
+            if "scale_rounding_mode" in getattr(Float4QuantConfig, "__dataclass_fields__", {}):
+                fp4_kwargs["scale_rounding_mode"] = scale_rounding_mode
+            elif scale_rounding_mode:
+                warning_rank_0(
+                    "Primus-Turbo Float4QuantConfig has no scale_rounding_mode; "
+                    f"mxfp4_scale_rounding_mode={scale_rounding_mode} is ignored."
+                )
+            self._quant_config = Float4QuantConfig(**fp4_kwargs)
             self._is_fp4 = True
         else:
             # FP8
@@ -663,7 +675,14 @@ def primus_turbo_fp4_autocast(
 
 
 def _get_fp8_autocast_for_quant_recipe(qrecipe: TEQuantizationRecipe):
-    if _is_fp4_or_fp8_enabled():
+    # Decide from the same state the Turbo forward will consult. The Turbo GEMM
+    # branch is chosen from the Turbo fp8/fp4 flags, and those stay on in places
+    # where TE's own flag no longer is: inside an MXFP4 layer, once the QKV
+    # site's BF16 override has exited, the site sees turbo_fp4 on with te_fp8
+    # off. Reading TE's flag alone then treats the context as non-quantized and
+    # drops the override, which sent a BF16-pinned O projection to the MXFP4
+    # GEMM and lost the loss to NaN from the first step.
+    if FP8GlobalStateManager.is_fp8_enabled() or _is_fp4_or_fp8_enabled():
         if not qrecipe.override_quantized_autocast:
             return nullcontext()
     else:
@@ -1147,7 +1166,9 @@ class PrimusTurboLinear(TELinear):
 
                 if get_num_microbatches() == 1:
                     if is_first_microbatch:
-                        self.quantized_weight_buffer = torch.empty(0, device=weight.device, dtype=float4_e2m1fn_x2)
+                        self.quantized_weight_buffer = torch.empty(
+                            0, device=weight.device, dtype=float4_e2m1fn_x2
+                        )
                     out = primus_turbo_torch.ops.gemm_fp4(
                         x,
                         weight,
@@ -1358,7 +1379,9 @@ class PrimusTurboRowParallelLinear(TERowParallelLinear):
 
                 if get_num_microbatches() == 1:
                     if is_first_microbatch:
-                        self.quantized_weight_buffer = torch.empty(0, device=weight.device, dtype=float4_e2m1fn_x2)
+                        self.quantized_weight_buffer = torch.empty(
+                            0, device=weight.device, dtype=float4_e2m1fn_x2
+                        )
                     out = primus_turbo_torch.ops.gemm_fp4(
                         x,
                         weight,
@@ -1562,7 +1585,9 @@ class PrimusTurboColumnParallelLinear(TEColumnParallelLinear):
 
                 if get_num_microbatches() == 1:
                     if is_first_microbatch:
-                        self.quantized_weight_buffer = torch.empty(0, device=weight.device, dtype=float4_e2m1fn_x2)
+                        self.quantized_weight_buffer = torch.empty(
+                            0, device=weight.device, dtype=float4_e2m1fn_x2
+                        )
                     out = primus_turbo_torch.ops.gemm_fp4(
                         x,
                         weight,
@@ -1779,7 +1804,9 @@ class PrimusTurboLayerNormColumnParallelLinear(TELayerNormColumnParallelLinear):
 
                 if get_num_microbatches() == 1:
                     if is_first_microbatch:
-                        self.quantized_weight_buffer = torch.empty(0, device=weight.device, dtype=float4_e2m1fn_x2)
+                        self.quantized_weight_buffer = torch.empty(
+                            0, device=weight.device, dtype=float4_e2m1fn_x2
+                        )
                     out = primus_turbo_torch.ops.gemm_fp4(
                         inp,
                         weight,
@@ -1978,6 +2005,7 @@ def fused_bias_act_with_probs(
     permuted_probs: torch.Tensor,
     tokens_per_experts: torch.Tensor,
     activation_func: str,
+    clamp_value: Optional[float] = None,
 ):
     assert intermediate_parallel.ndim == 2
     assert permuted_probs.ndim == 1
@@ -1998,7 +2026,7 @@ def fused_bias_act_with_probs(
     else:
         raise ValueError(f"Activation function {activation_func} is not supported.")
 
-    return fused_act_with_probs(intermediate_parallel, permuted_probs, row_mask)
+    return fused_act_with_probs(intermediate_parallel, permuted_probs, row_mask, clamp_limit=clamp_value)
 
 
 class PrimusTurboGroupedLinear(TEGroupedLinear):
@@ -2110,130 +2138,127 @@ class PrimusTurboGroupedLinear(TEGroupedLinear):
         self._ensure_weight_views()
         return super().state_dict(*args, **kwargs)
 
-    def forward(self, x: torch.Tensor, m_splits: torch.Tensor):
-        _is_first_microbatch = self.is_first_microbatch
-        quant_context = _get_fp8_autocast_for_quant_params(self.te_quant_params, self.training)
+    def prepare_weights(self, x: torch.Tensor):
+        """Resolve the weight operand for grouped GEMM / fused grouped MLP.
 
-        with quant_context:
-            out = self.forward_internal(x, m_splits, _is_first_microbatch)
-
+        Owns ``is_first_microbatch``: first-microbatch quantized-weight cache,
+        the MXFP4 de-osc dtype marker, and :func:`_bridge_weight_grad` so DDP
+        still sees ``main_grad`` on the real ``self.weights`` Parameter.
+        Returns ``(x, weight, fuse_wgrad_accum_pattern)`` where ``weight`` is
+        either that Parameter or a :class:`PrimusTurboQuantizedTensorPair`.
+        """
+        self._ensure_weight_views()
+        weights = self.weights
+        is_first_microbatch = self.is_first_microbatch
         self.is_first_microbatch = False
+        fuse_wgrad_accum_pattern = _fuse_wgrad_accum_pattern(self.config, weights)
 
+        if PrimusTurboLowPrecisionGlobalStateManager.is_turbo_fp8_enabled():
+            quant_config = PrimusTurboLowPrecisionGlobalStateManager.get_turbo_quant_config()
+            if get_num_microbatches() == 1:
+                return x, weights, fuse_wgrad_accum_pattern
+            if is_first_microbatch:
+                (
+                    self.quantized_weight_buffer,
+                    self.quantized_weight_t_buffer,
+                ) = _maybe_create_quantized_weight_buffers(
+                    weights,
+                    float8_e4m3,
+                    quant_config,
+                    disable_parameter_transpose_cache=self.disable_parameter_transpose_cache
+                    or quant_config.current_scaling(),
+                )
+            x, quantized_weights = _bridge_weight_grad(
+                x,
+                weights,
+                PrimusTurboQuantizedTensorPair(
+                    data=self.quantized_weight_buffer, data_t=self.quantized_weight_t_buffer
+                ),
+                fuse_wgrad_accum=fuse_wgrad_accum_pattern is not None,
+            )
+            return x, quantized_weights, fuse_wgrad_accum_pattern
+
+        if PrimusTurboLowPrecisionGlobalStateManager.is_turbo_fp4_enabled():
+            quant_config = PrimusTurboLowPrecisionGlobalStateManager.get_turbo_quant_config()
+            if get_num_microbatches() == 1:
+                # Direct path quantizes bf16 internally. Mark float4_e2m1fn_x2 so
+                # de-osc can tell MXFP4 weights from an FP8 quantized_weight_buffer.
+                if is_first_microbatch:
+                    self.quantized_weight_buffer = torch.empty(
+                        0, device=weights.device, dtype=float4_e2m1fn_x2
+                    )
+                return x, weights, fuse_wgrad_accum_pattern
+            if is_first_microbatch:
+                (
+                    self.quantized_weight_buffer,
+                    self.quantized_weight_t_buffer,
+                ) = _maybe_create_quantized_weight_buffers(
+                    weights,
+                    float4_e2m1fn_x2,
+                    quant_config,
+                    disable_parameter_transpose_cache=self.disable_parameter_transpose_cache,
+                )
+            x, quantized_weights = _bridge_weight_grad(
+                x,
+                weights,
+                PrimusTurboQuantizedTensorPair(
+                    data=self.quantized_weight_buffer, data_t=self.quantized_weight_t_buffer
+                ),
+                fuse_wgrad_accum=fuse_wgrad_accum_pattern is not None,
+            )
+            return x, quantized_weights, fuse_wgrad_accum_pattern
+
+        return x, weights, fuse_wgrad_accum_pattern
+
+    def forward(self, x: torch.Tensor, m_splits: torch.Tensor):
+        quant_context = _get_fp8_autocast_for_quant_params(self.te_quant_params, self.training)
+        with quant_context:
+            out = self.forward_internal(x, m_splits)
         return out
 
     def forward_internal(
         self,
         x: torch.Tensor,
         m_splits: torch.Tensor,
-        is_first_microbatch: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Forward step of the legacy PrimusTurbo grouped-gemm MLP."""
-        weights = self.weights
         # NOTE: keep x and m_splits on the same device
         if m_splits.device != x.device:
             m_splits = m_splits.to(x.device)
+
+        x, weights, fuse_wgrad_accum_pattern = self.prepare_weights(x)
 
         if PrimusTurboLowPrecisionGlobalStateManager.is_turbo_fp8_enabled():
             quant_config = PrimusTurboLowPrecisionGlobalStateManager.get_turbo_quant_config()
             assert (
                 quant_config.mxfp8_scaling() or quant_config.current_scaling() or quant_config.block_scaling()
             ), "Turbo FP8 is enabled but quant config is not mxfp8, current scaling, or block scaling."
-
-            if get_num_microbatches() == 1:
-                out = primus_turbo_torch.ops.grouped_gemm_fp8(
-                    x,
-                    weights,
-                    m_splits,
-                    trans_b=True,
-                    config=quant_config.data(),
-                    fuse_bgrad_accum_pattern=_fuse_wgrad_accum_pattern(self.config, weights),
-                )
-            else:
-                if is_first_microbatch:
-                    (
-                        self.quantized_weight_buffer,
-                        self.quantized_weight_t_buffer,
-                    ) = _maybe_create_quantized_weight_buffers(
-                        weights,
-                        float8_e4m3,
-                        quant_config,
-                        disable_parameter_transpose_cache=self.disable_parameter_transpose_cache
-                        or quant_config.current_scaling(),
-                    )
-
-                fuse_pattern = _fuse_wgrad_accum_pattern(self.config, weights)
-                x, quantized_weights = _bridge_weight_grad(
-                    x,
-                    weights,
-                    PrimusTurboQuantizedTensorPair(
-                        data=self.quantized_weight_buffer, data_t=self.quantized_weight_t_buffer
-                    ),
-                    fuse_wgrad_accum=fuse_pattern is not None,
-                )
-
-                out = primus_turbo_torch.ops.grouped_gemm_fp8(
-                    x,
-                    quantized_weights,
-                    m_splits,
-                    trans_b=True,
-                    config=quant_config.data(),
-                    fuse_bgrad_accum_pattern=fuse_pattern,
-                )
+            out = primus_turbo_torch.ops.grouped_gemm_fp8(
+                x,
+                weights,
+                m_splits,
+                trans_b=True,
+                config=quant_config.data(),
+                fuse_bgrad_accum_pattern=fuse_wgrad_accum_pattern,
+            )
         elif PrimusTurboLowPrecisionGlobalStateManager.is_turbo_fp4_enabled():
             quant_config = PrimusTurboLowPrecisionGlobalStateManager.get_turbo_quant_config()
             assert quant_config.mxfp4_scaling(), "Turbo FP4 is enabled but quant config is not mxfp4."
-
-            if get_num_microbatches() == 1:
-                # This direct path quantizes the bf16 weight internally and has
-                # no persistent cache. Expose a lightweight runtime marker so
-                # weight de-oscillation can identify the grouped FP4 weight.
-                if is_first_microbatch:
-                    self.quantized_weight_buffer = torch.empty(0, device=weights.device, dtype=float4_e2m1fn_x2)
-                out = primus_turbo_torch.ops.grouped_gemm_fp4(
-                    x,
-                    weights,
-                    m_splits,
-                    trans_b=True,
-                    config=quant_config.data(),
-                    fuse_bgrad_accum_pattern=_fuse_wgrad_accum_pattern(self.config, weights),
-                )
-            else:
-                if is_first_microbatch:
-                    (
-                        self.quantized_weight_buffer,
-                        self.quantized_weight_t_buffer,
-                    ) = _maybe_create_quantized_weight_buffers(
-                        weights,
-                        float4_e2m1fn_x2,
-                        quant_config,
-                        disable_parameter_transpose_cache=self.disable_parameter_transpose_cache,
-                    )
-
-                fuse_pattern = _fuse_wgrad_accum_pattern(self.config, weights)
-                x, quantized_weights = _bridge_weight_grad(
-                    x,
-                    weights,
-                    PrimusTurboQuantizedTensorPair(
-                        data=self.quantized_weight_buffer, data_t=self.quantized_weight_t_buffer
-                    ),
-                    fuse_wgrad_accum=fuse_pattern is not None,
-                )
-
-                out = primus_turbo_torch.ops.grouped_gemm_fp4(
-                    x,
-                    quantized_weights,
-                    m_splits,
-                    trans_b=True,
-                    config=quant_config.data(),
-                    fuse_bgrad_accum_pattern=fuse_pattern,
-                )
+            out = primus_turbo_torch.ops.grouped_gemm_fp4(
+                x,
+                weights,
+                m_splits,
+                trans_b=True,
+                config=quant_config.data(),
+                fuse_bgrad_accum_pattern=fuse_wgrad_accum_pattern,
+            )
         else:
             out = primus_turbo_torch.ops.grouped_gemm(
                 x,
                 weights,
                 m_splits,
                 trans_b=True,
-                fuse_bgrad_accum_pattern=_fuse_wgrad_accum_pattern(self.config, weights),
+                fuse_bgrad_accum_pattern=fuse_wgrad_accum_pattern,
             )
 
         return out, None
